@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+venv/
+venv_*/
+env/
+ENV/
+
+# Data & Cache
+segments_cache/
+dataset_cache/
+temp_audio_downloads/
+*.npz
+
+# Logs
+*.log
+*.out
+
+# Credentials & Secrets
+*.json
+*.pem
+*.key
+.env
+.aws/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Model checkpoints
+checkpoints/
+outputs/
+wandb/
+
+# Temp files
+temp_*/
+tmp_*/
+*.tmp
+

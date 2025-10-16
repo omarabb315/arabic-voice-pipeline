@@ -1,0 +1,76 @@
+# Voice Cloning Finetuning Configuration
+
+# ============================================================================
+# Data Parameters
+# ============================================================================
+
+# GCP Bucket Configuration
+gcp_bucket_name: "audio-data-gemini"
+
+# List of channel names to process
+# Update this with your actual channel names
+channels:
+  - "ZadTVchannel"
+  - "Atheer"
+  # Add more channels as needed
+
+# Dataset paths (local storage on VM)
+segments_dataset_path: "dataset_cache/segments_dataset/"
+paired_dataset_path: "dataset_cache/paired_dataset/"
+
+# ============================================================================
+# Data Filtering Parameters
+# ============================================================================
+
+# Duration filters (in seconds)
+min_duration_sec: 0.5
+max_duration_sec: 15.0
+
+# Speaker filtering
+min_segments_per_speaker: 2  # Minimum segments required per speaker
+
+# Pairing strategy
+max_pairs_per_speaker: null  # null = create all possible pairs
+                              # or set an integer (e.g., 100) to limit pairs per speaker
+
+# ============================================================================
+# Model Parameters
+# ============================================================================
+
+# Base model to finetune from
+restore_from: "neuphonic/neutts-air"
+
+# Maximum sequence length
+max_seq_len: 2048
+
+# ============================================================================
+# Training Parameters
+# ============================================================================
+
+# Output configuration
+save_root: "./checkpoints"
+run_name: "voice_cloning_run_1"
+
+# Learning rate
+lr: 1.0e-5
+
+# Training steps
+max_steps: 10000
+
+# Batch size
+per_device_train_batch_size: 4
+
+# Warmup
+warmup_ratio: 0.1
+
+# Checkpointing
+save_steps: 500
+logging_steps: 10
+
+# ============================================================================
+# Hardware Configuration
+# ============================================================================
+
+# Device for codec encoding (used in build_dataset.py)
+codec_device: "cuda"  # or "cpu"
+

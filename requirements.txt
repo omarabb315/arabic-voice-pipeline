@@ -1,0 +1,31 @@
+# Core Dependencies
+torch>=2.0.0
+transformers>=4.30.0
+datasets>=2.14.0
+
+# Audio Processing
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# Phonemization
+phonemizer>=3.2.0
+
+# NeuCodec (for VQ encoding)
+neucodec>=0.0.3
+
+# Cloud Storage Integration
+google-cloud-storage>=2.10.0  # For GCS (primary)
+boto3>=1.26.0  # For S3-compatible storage (optional, has scripts)
+
+# Configuration & CLI
+fire>=0.5.0
+omegaconf>=2.3.0
+
+# Logging & Progress
+loguru>=0.7.0
+tqdm>=4.65.0
+
+# Optional but Recommended
+tensorboard>=2.13.0  # For training monitoring
+accelerate>=0.20.0   # For distributed training
+
