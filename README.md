@@ -273,17 +273,5 @@ python scripts/add_codes_to_dataset_s3.py \
 
 This project is licensed under the MIT License.
 
-## 🙏 Acknowledgments
 
-- **NeuCodec**: VQ codec by Neuphonic
-- **HuggingFace**: Dataset hosting and transformers
-- **Google Cloud**: Storage and compute
-
-## 📧 Contact
-
-For questions or issues, please open a GitHub issue or contact the maintainers.
-
----
-
-**Built with ❤️ for Arabic Voice Cloning**
 
