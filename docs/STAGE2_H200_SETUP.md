@@ -1,51 +1,58 @@
-# Stage 2: Adding VQ Codes on H200 Machine
+# Stage 2: Adding VQ Codes on H200 Machine (RAM-Optimized)
 
-This guide explains how to transfer the dataset from the T4 GCP VM to your on-premise H200 machine and add VQ codes.
+This guide explains how to process all segments on your H200 machine using 2TB RAM for optimal performance.
 
 ## Overview
 
-**Stage 1 (T4 - Completed):** Built audio + metadata (~10 minutes)  
-**Stage 2 (H200 - This guide):** Add VQ codes (~1-2 hours on H200, would be 21 hours on T4)
+**Stage 1 (T4 - Completed):** Built audio + metadata segments (~221GB for 656K segments)  
+**Stage 2 (H200 - This guide):** Add VQ codes using RAM-optimized processing (~3-5 hours on H200)
+
+### Key Features
+
+- **RAM-Optimized:** Uses 2TB RAM to process all 656K segments at once
+- **No Disk Limitation:** Bypasses 100GB disk storage limit using `/tmp` with OS caching
+- **Resume Capability:** Three-phase checkpointing survives interruptions
+- **Fast I/O:** Automatic RAM caching provides 10-100x faster I/O vs disk
 
 ---
 
-## Step 1: Upload Dataset to GCS (from T4 GCP VM)
+## Prerequisites
 
-After Stage 1 completes on the T4 VM:
+### Hardware Requirements
 
-```bash
-# Upload dataset to GCS bucket
-cd /home/ubuntu/work/neutts
-gsutil -m rsync -r dataset_cache/segments_dataset/ \
-  gs://audio-data-gemini/datasets/segments_dataset/
+- **RAM:** 2TB total (1.9TB+ available recommended for 656K segments)
+- **Disk:** 100GB+ for code and logs (data stored in RAM)
+- **GPU:** H200 or similar CUDA-capable GPU
+- **Network:** Good bandwidth for GCS downloads/uploads
 
-# Verify upload
-gsutil ls -lh gs://audio-data-gemini/datasets/segments_dataset/
-```
+### Software Requirements
 
-**Expected size:** ~50-100 GB (depending on total audio duration)
+- Python 3.8+
+- CUDA 12.4+ (for H200)
+- GCS credentials with read/write access
 
 ---
 
-## Step 2: Setup H200 On-Premise Machine
+## Step 1: Setup H200 Machine
 
-### 2.1 Install Dependencies
+### 1.1 Install Dependencies
 
 ```bash
+# Clone repository
+git clone https://github.com/omarabb315/arabic-voice-pipeline.git
+cd arabic-voice-pipeline
+
 # Create virtual environment
-python3 -m venv venv_h200
-source venv_h200/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 
 # Install required packages
 pip install --upgrade pip
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install datasets transformers neucodec librosa soundfile fire tqdm
-
-# Install FFmpeg (for dataset audio features)
-sudo apt-get update && sudo apt-get install -y ffmpeg
+pip install -r requirements.txt
 ```
 
-### 2.2 Setup GCS Access
+### 1.2 Setup GCS Access
 
 ```bash
 # Install gcloud SDK (if not already installed)
@@ -56,142 +63,213 @@ exec -l $SHELL
 sudo apt-get install google-cloud-sdk
 ```
 
-### 2.3 Copy Service Account JSON Key
+### 1.3 Configure GCS Credentials
 
 Transfer the GCS credentials file to H200:
 
 ```bash
 # Option 1: SCP from local machine
-scp ajgc-ai-portal-dev-01-93965d2f6a97.json user@h200-machine:/path/to/
+scp your-service-account-key.json user@h200-machine:/path/to/
 
-# Option 2: Download from secure storage
-# (Copy the JSON content securely)
+# Option 2: Create on H200 directly (paste content)
+nano ~/gcs-credentials.json
 ```
 
 Set environment variable:
 
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS="/path/to/ajgc-ai-portal-dev-01-93965d2f6a97.json"
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your-service-account-key.json"
 
 # Add to ~/.bashrc for persistence
-echo 'export GOOGLE_APPLICATION_CREDENTIALS="/path/to/ajgc-ai-portal-dev-01-93965d2f6a97.json"' >> ~/.bashrc
+echo 'export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your-service-account-key.json"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
 ---
 
-## Step 3: Download Dataset from GCS (on H200)
+## Step 2: Verify RAM and System Resources
+
+Before running the full pipeline, verify your system has sufficient resources:
 
 ```bash
-# Create project directory
-mkdir -p /path/to/neutts
-cd /path/to/neutts
+# Check RAM
+free -h
 
-# Download dataset from GCS
-gsutil -m rsync -r \
-  gs://audio-data-gemini/datasets/segments_dataset/ \
-  dataset_cache/segments_dataset/
+# You should see:
+# Total: ~2TB
+# Available: ~1.9TB+ (need at least 300GB for 221GB data + overhead)
 
-# Verify download
-ls -lh dataset_cache/segments_dataset/
+# Check /dev/shm size
+df -h /dev/shm
+
+# Test RAM detection
+python test_ram_disk_processing.py --quick
 ```
 
-**Download speed:** Depends on your internet connection  
-**Time:** 10-60 minutes depending on bandwidth
-
----
-
-## Step 4: Copy Scripts to H200
-
-Transfer the encoding script:
-
-```bash
-# From T4 VM, upload scripts to GCS
-cd /home/ubuntu/work/neutts
-gsutil cp add_codes_to_dataset.py gs://audio-data-gemini/scripts/
-gsutil cp requirements.txt gs://audio-data-gemini/scripts/
-
-# On H200, download scripts
-gsutil cp gs://audio-data-gemini/scripts/add_codes_to_dataset.py .
-gsutil cp gs://audio-data-gemini/scripts/requirements.txt .
+**Expected Output:**
+```
+Total RAM: 2048.0 GB
+Available RAM: 1977.0 GB
+✅ Sufficient RAM detected
 ```
 
 ---
 
-## Step 5: Run Stage 2 Encoding (on H200)
+## Step 3: Test with Small Sample (Recommended)
 
-### 5.1 Test GPU
+Before processing all 656K segments, test with a small sample:
 
 ```bash
-nvidia-smi  # Verify H200 is detected
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+# Run full test suite (interactive)
+python test_ram_disk_processing.py
+
+# This will:
+# 1. Detect RAM and temp storage
+# 2. Test GCS connection  
+# 3. Optionally process 10 sample files
 ```
 
-### 5.2 Run Encoding in tmux
+If all tests pass, you're ready for the full run!
+
+---
+
+## Step 4: Run Full Processing Pipeline
+
+The new RAM-optimized script processes all segments in three phases:
+
+### 4.1 Start Processing in tmux
 
 ```bash
-# Start tmux session
+# Start tmux session (important for long-running jobs)
 tmux new-session -s add_codes
 
-# Run encoding
-source venv_h200/bin/activate
-python add_codes_to_dataset.py \
-  --input_dataset_path='dataset_cache/segments_dataset/' \
-  --output_dataset_path='dataset_cache/segments_with_codes/' \
+# Activate environment
+source venv/bin/activate
+
+# Run RAM-optimized processing
+python scripts/add_codes_to_dataset_gcs.py \
+  --gcs_bucket=audio-data-gemini \
+  --input_prefix=segments_cache/ \
+  --output_prefix=segments_with_codes/ \
   --codec_device=cuda \
-  --save_every=100
+  --checkpoint_interval=5000
 
 # Detach: Ctrl+B then D
 # Reattach: tmux attach -s add_codes
 ```
 
-### 5.3 Monitor Progress
+### 4.2 What Happens During Processing
+
+The script runs in three phases with automatic checkpointing:
+
+**Phase 1: Download All Segments** (~30-60 min)
+- Downloads all 656K segments (~221GB) from GCS to `/tmp/neutts_processing/`
+- Linux automatically caches in RAM (with 1.9TB available)
+- Checkpoints every 5,000 files
+
+**Phase 2: Process All Segments** (~2-4 hours)
+- Loads NeuCodec on H200 GPU
+- Encodes all segments with VQ codes
+- Saves processed files in `/tmp` (still in RAM cache)
+- Checkpoints every 5,000 files
+
+**Phase 3: Upload All Segments** (~30-60 min)
+- Uploads all processed segments to GCS `segments_with_codes/` prefix
+- Checkpoints every 5,000 files
+- Cleans up temporary files after successful upload
+
+### 4.3 Monitor Progress
 
 ```bash
 # Watch GPU usage
 watch -n 1 nvidia-smi
 
-# Check progress
+# Check RAM usage
+watch -n 1 'free -h'
+
+# Reattach to see progress
 tmux attach -s add_codes
 ```
 
-**Expected time on H200:** 1-2 hours for ~10,000-30,000 segments  
-**Much faster than T4:** ~10x speedup
+### 4.4 Resume After Interruption
 
----
-
-## Step 6: Upload Final Dataset (Optional)
-
-If you want to keep the final dataset in GCS:
+If the process is interrupted (network issue, OOM, manual stop), simply re-run the same command:
 
 ```bash
-# Upload enhanced dataset back to GCS
-cd /path/to/neutts
-gsutil -m rsync -r dataset_cache/segments_with_codes/ \
-  gs://audio-data-gemini/datasets/segments_with_codes/
+python scripts/add_codes_to_dataset_gcs.py \
+  --gcs_bucket=audio-data-gemini \
+  --input_prefix=segments_cache/ \
+  --output_prefix=segments_with_codes/ \
+  --codec_device=cuda
 ```
+
+The script automatically:
+- Detects completed phases
+- Skips already processed files
+- Resumes from the last checkpoint
+
+**Expected Total Time:** 3-5 hours for 656K segments (vs 10-15 hours with batch processing)
 
 ---
 
-## Step 7: Use Dataset for Training
+## Step 5: Next Steps - Create HuggingFace Dataset
 
-The final dataset at `dataset_cache/segments_with_codes/` contains:
+After all segments are processed and uploaded to GCS, create a HuggingFace dataset:
 
-- ✅ Audio (raw waveforms)
-- ✅ VQ Codes (encoded representations)
+```bash
+# Login to HuggingFace
+huggingface-cli login
+
+# Create and push dataset (streams from GCS, no local download needed)
+python create_hf_dataset_from_npz.py \
+  --gcs_bucket=audio-data-gemini \
+  --gcs_prefix=segments_with_codes/ \
+  --output_path=/tmp/segments_dataset/ \
+  --push_to_hub=True \
+  --hf_repo=omarabb315/arabic-voice-cloning-dataset
+```
+
+The final dataset contains:
+
+- ✅ Audio (raw waveforms, 16kHz)
+- ✅ VQ Codes (encoded representations for training)
 - ✅ Text (transcriptions)
-- ✅ Metadata (speaker, channel, gender, dialect, tone)
-
-You can now use this for:
-1. Building paired dataset (`create_pairs.py`)
-2. Training the voice cloning model (`finetune-neutts.py`)
+- ✅ Metadata (speaker_id, channel, gender, dialect, tone, duration)
 
 ---
 
 ## Troubleshooting
 
+### Issue: Insufficient RAM
+
+If you see warnings about insufficient RAM:
+
+```bash
+# Check available RAM
+free -h
+
+# If less than 300GB available, try:
+# 1. Close other applications
+# 2. Wait for other jobs to finish (shared server)
+# 3. Contact admin to free up resources
+```
+
+### Issue: /tmp disk full
+
+The script uses `/tmp` with OS RAM caching, but if `/tmp` has size limits:
+
+```bash
+# Check /tmp disk usage
+df -h /tmp
+
+# Solution: Script automatically uses RAM caching
+# With 1.9TB available RAM, Linux will cache everything in memory
+```
+
 ### Issue: "gsutil: command not found"
 ```bash
-pip install gsutil
+# Install gcloud SDK
+curl https://sdk.cloud.google.com | bash
 # or
 sudo apt-get install google-cloud-sdk
 ```
@@ -201,29 +279,87 @@ sudo apt-get install google-cloud-sdk
 # Verify credentials
 gcloud auth activate-service-account --key-file=/path/to/key.json
 gsutil ls gs://audio-data-gemini/  # Test access
+
+# Check environment variable
+echo $GOOGLE_APPLICATION_CREDENTIALS
 ```
 
-### Issue: Out of memory on H200
+### Issue: Process interrupted (network, OOM, etc.)
+
+Simply re-run the same command - it automatically resumes:
+
 ```bash
-# Reduce batch_size (though default is 1)
-python add_codes_to_dataset.py --batch_size=1 --save_every=50
+python scripts/add_codes_to_dataset_gcs.py \
+  --gcs_bucket=audio-data-gemini \
+  --input_prefix=segments_cache/ \
+  --output_prefix=segments_with_codes/ \
+  --codec_device=cuda
 ```
 
-### Issue: Dataset too large to download
+The script checks:
+- What's already uploaded to GCS (skips those)
+- What's been processed locally (continues upload)
+- What's been downloaded (continues processing)
+
+### Issue: CUDA out of memory
+
 ```bash
-# Download in chunks (by channel)
-# You'll need to modify the approach or download specific arrow files
+# Check GPU memory
+nvidia-smi
+
+# If other processes are using GPU, wait or:
+# Use CPU (slower but works)
+python scripts/add_codes_to_dataset_gcs.py \
+  --codec_device=cpu \
+  --gcs_bucket=audio-data-gemini \
+  --input_prefix=segments_cache/ \
+  --output_prefix=segments_with_codes/
 ```
 
 ---
 
 ## Performance Comparison
 
-| Stage | Machine | Time | Bottleneck |
-|-------|---------|------|------------|
-| Stage 1 (Audio + Metadata) | T4 GCP | ~10 min | GCS download |
-| Stage 2 (Add Codes) - T4 | T4 GCP | ~21 hours | Slow encoding |
-| Stage 2 (Add Codes) - H200 | H200 On-prem | ~1-2 hours | 10x faster! |
+### Old Batch Approach (100GB disk limit)
+- **Download:** 70K batches (~24GB each), ~10 iterations
+- **Process:** Each batch separately
+- **Upload:** Each batch separately
+- **Time:** 10-15 hours total
+- **Disk:** 24GB per batch, cleanup between batches
 
-**Total time saved:** ~19 hours! 🚀
+### New RAM-Optimized Approach (2TB RAM)
+- **Download:** All 656K segments at once (~221GB) to `/tmp`
+- **Process:** All segments in one pass (RAM caching)
+- **Upload:** All segments at once
+- **Time:** 3-5 hours total (50-70% faster!)
+- **Disk:** <10GB (logs only, data in RAM)
+
+### Time Breakdown (656K segments)
+
+| Phase | Old Approach | New Approach | Improvement |
+|-------|--------------|--------------|-------------|
+| Download | 10×(10 min) = 100 min | 30-60 min | 40-70% faster |
+| Process | 10×(40 min) = 400 min | 120-240 min | 40-70% faster |
+| Upload | 10×(10 min) = 100 min | 30-60 min | 40-70% faster |
+| **Total** | **600-900 min (10-15 hrs)** | **180-360 min (3-6 hrs)** | **50-70% faster** |
+
+### Why It's Faster
+
+1. **No batch overhead:** Download/upload once instead of 10 times
+2. **RAM I/O:** 10-100x faster than disk I/O
+3. **No cleanup between batches:** Process continuously
+4. **Better caching:** OS optimizes RAM usage automatically
+
+---
+
+## System Requirements Summary
+
+| Resource | Minimum | Recommended | Your H200 |
+|----------|---------|-------------|-----------|
+| RAM | 300 GB available | 500 GB available | 1.9 TB ✅ |
+| Disk | 100 GB | 200 GB | 100 GB ✅ |
+| GPU VRAM | 40 GB | 80 GB | 141 GB (H200) ✅ |
+| Network | 100 Mbps | 1 Gbps | - |
+
+**Your H200 is perfectly suited for this workflow!** 🚀
 

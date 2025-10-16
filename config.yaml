@@ -74,3 +74,31 @@ logging_steps: 10
 # Device for codec encoding (used in build_dataset.py)
 codec_device: "cuda"  # or "cpu"
 
+# ============================================================================
+# RAM Disk Configuration (for H200 processing)
+# ============================================================================
+
+# Automatically detect and use optimal temp storage location
+# Priority: custom tmpfs > /dev/shm (if large enough) > /tmp with OS caching
+use_ram_disk: true
+
+# Auto-detect optimal location based on available RAM
+# If false, uses temp_dir_path below
+auto_detect_ram: true
+
+# Manual temp directory path (used if auto_detect_ram=false)
+# Leave null to use auto-detection
+temp_dir_path: null  # e.g., "/tmp/neutts_processing"
+
+# Maximum RAM usage for safety (in GB)
+# Script will warn if data size exceeds this
+max_ram_usage_gb: 300
+
+# Checkpoint interval - save progress every N files
+# Useful for resume capability after interruptions
+checkpoint_interval: 5000
+
+# GCS prefixes for stage 1 (input) and stage 2 (output)
+gcs_input_prefix: "segments_cache/"
+gcs_output_prefix: "segments_with_codes/"
+
