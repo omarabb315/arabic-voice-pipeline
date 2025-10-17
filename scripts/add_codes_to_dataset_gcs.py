@@ -37,6 +37,7 @@ def add_codes_to_segments_gcs(
     resume_file: str = "processing_progress.json",
     checkpoint_interval: int = 5000,  # Save progress every N files
     auto_detect_ram: bool = True,  # Automatically detect and validate RAM
+    skip_cleanup: bool = False,  # Keep data for training if True
 ):
     """
     Add VQ codes to .npz segments - processes all segments at once using available RAM.
@@ -55,6 +56,7 @@ def add_codes_to_segments_gcs(
         resume_file: JSON file to track progress for resuming
         checkpoint_interval: Save progress every N files (default: 5000)
         auto_detect_ram: Automatically detect optimal temp location (default: True)
+        skip_cleanup: If True, keep processed data (useful for training on same machine)
     """
     
     print("=" * 70)
@@ -65,6 +67,7 @@ def add_codes_to_segments_gcs(
     print(f"Output prefix: {output_prefix}")
     print(f"Device: {codec_device}")
     print(f"Checkpoint interval: {checkpoint_interval:,} files")
+    print(f"Skip cleanup: {'Yes (data will be preserved)' if skip_cleanup else 'No (data will be deleted)'}")
     print()
     
     # Auto-detect optimal temp location if not specified
@@ -411,18 +414,35 @@ def add_codes_to_segments_gcs(
     print()
     
     # Cleanup
-    print("🧹 Cleaning up temporary files...")
-    try:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        print(f"✅ Removed temp directory: {temp_dir}")
-    except Exception as e:
-        logger.warning(f"Could not remove temp dir: {e}")
-    
-    try:
-        os.remove(resume_file)
-        print(f"✅ Removed progress file: {resume_file}")
-    except Exception as e:
-        logger.warning(f"Could not remove progress file: {e}")
+    if skip_cleanup:
+        print()
+        print("=" * 70)
+        print("✅ Skipping Cleanup - Data Preserved for Training")
+        print("=" * 70)
+        print(f"Processed data available at: {temp_dir}")
+        print(f"Total files: {progress['processed']:,}")
+        print(f"Total size: ~{progress['processed'] * 0.35 / 1024:.1f} GB")
+        print()
+        print("You can now use this data for:")
+        print(f"  1. Training: python training/finetune-neutts.py")
+        print(f"  2. Creating pairs: python training/create_pairs.py --segments_path={temp_dir}")
+        print()
+        print(f"To clean up later manually:")
+        print(f"  rm -rf {temp_dir}")
+        print(f"  rm {resume_file}")
+    else:
+        print("🧹 Cleaning up temporary files...")
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            print(f"✅ Removed temp directory: {temp_dir}")
+        except Exception as e:
+            logger.warning(f"Could not remove temp dir: {e}")
+        
+        try:
+            os.remove(resume_file)
+            print(f"✅ Removed progress file: {resume_file}")
+        except Exception as e:
+            logger.warning(f"Could not remove progress file: {e}")
     
     print()
     print("All done! 🎉")

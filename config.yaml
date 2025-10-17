@@ -102,3 +102,8 @@ checkpoint_interval: 5000
 gcs_input_prefix: "segments_cache/"
 gcs_output_prefix: "segments_with_codes/"
 
+# Skip cleanup after processing (useful for training on same machine)
+# If true, processed data is kept in temp_dir for training
+# If false, data is deleted after upload to save disk space
+skip_cleanup: false
+

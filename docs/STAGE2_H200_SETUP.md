@@ -154,6 +154,11 @@ python scripts/add_codes_to_dataset_gcs.py \
   --codec_device=cuda \
   --checkpoint_interval=5000
 
+# If you want to train on the same machine, add --skip_cleanup=True
+# This keeps the processed data instead of deleting it:
+# --skip_cleanup=True \
+# --temp_dir=/workspace/segments_with_codes
+
 # Detach: Ctrl+B then D
 # Reattach: tmux attach -s add_codes
 ```
@@ -209,6 +214,54 @@ The script automatically:
 - Resumes from the last checkpoint
 
 **Expected Total Time:** 3-5 hours for 656K segments (vs 10-15 hours with batch processing)
+
+---
+
+## Special: Training on Same Machine (RunPod/Cloud)
+
+If you're running on a cloud instance (RunPod, AWS, etc.) and want to train on the **same machine** after processing:
+
+### Use Persistent Storage + Skip Cleanup
+
+```bash
+# Use a persistent directory and skip cleanup
+python scripts/add_codes_to_dataset_gcs.py \
+  --gcs_bucket=audio-data-gemini \
+  --input_prefix=segments_cache/ \
+  --output_prefix=segments_with_codes/ \
+  --codec_device=cuda \
+  --temp_dir=/workspace/segments_with_codes \
+  --skip_cleanup=True
+
+# Data will be kept at /workspace/segments_with_codes/
+# Ready for immediate training!
+```
+
+**Benefits:**
+- ✅ No need to re-download from GCS for training
+- ✅ Saves time and bandwidth
+- ✅ Data already on fast local disk
+- ✅ Can start training immediately after processing
+
+**After processing completes:**
+
+```bash
+# Create training pairs
+python training/create_pairs.py \
+  --segments_path=/workspace/segments_with_codes/
+
+# Start training
+python training/finetune-neutts.py \
+  --dataset_path=/workspace/paired_dataset/
+```
+
+**Cleanup later (if needed):**
+
+```bash
+# After training is done and you've saved checkpoints:
+rm -rf /workspace/segments_with_codes/
+rm processing_progress.json
+```
 
 ---
 
