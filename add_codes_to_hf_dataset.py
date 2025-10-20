@@ -112,85 +112,31 @@ def add_codes_batch(
     audio_arrays = batch['audio']
     batch_codes = []
     
-    # Debug: Print info about first batch (only once)
-    if debug and len(batch_codes) == 0:
-        print(f"DEBUG - Audio type: {type(audio_arrays)}")
-        if len(audio_arrays) > 0:
-            print(f"DEBUG - First audio type: {type(audio_arrays[0])}")
-            if isinstance(audio_arrays[0], dict):
-                print(f"DEBUG - First audio keys: {audio_arrays[0].keys()}")
-    
     # Process each audio in the batch
     for i, audio_data in enumerate(audio_arrays):
-        # Handle different audio formats from HuggingFace
-        if isinstance(audio_data, dict):
-            # Standard format: {'array': np.array, 'sampling_rate': 16000}
+        # Simply access the 'array' key - HuggingFace Audio feature always uses this format
+        try:
             audio_array = audio_data['array']
-        elif hasattr(audio_data, '__getitem__') and not isinstance(audio_data, np.ndarray):
-            # AudioDecoder object - try to decode it by accessing as dict
-            try:
-                decoded = audio_data if isinstance(audio_data, dict) else dict(audio_data)
-                audio_array = decoded['array']
-            except:
-                # If that fails, try array attribute
-                audio_array = audio_data.array if hasattr(audio_data, 'array') else np.array(audio_data)
-        elif hasattr(audio_data, 'array'):
-            # Object with array attribute
-            audio_array = audio_data.array
-        elif isinstance(audio_data, np.ndarray):
-            # Already a numpy array
-            audio_array = audio_data
-        else:
-            # Last resort: try to convert to numpy array
-            audio_array = np.array(audio_data)
-        
-        # Ensure it's a numpy array
-        if not isinstance(audio_array, np.ndarray):
-            audio_array = np.array(audio_array)
-        
-        # Check if array contains objects (not numeric data)
-        if audio_array.dtype == np.object_:
-            # Try to extract the actual numeric data
-            if len(audio_array) > 0 and hasattr(audio_array[0], '__array__'):
-                audio_array = np.concatenate([np.array(x) for x in audio_array])
+        except (KeyError, TypeError):
+            # Fallback: if not dict-like, try as numpy array directly
+            if isinstance(audio_data, np.ndarray):
+                audio_array = audio_data
             else:
-                # Try flattening if it's nested
-                try:
-                    audio_array = np.array(audio_array.tolist(), dtype=np.float32)
-                except:
-                    # If all else fails, skip this sample and log error
-                    if debug:
-                        print(f"ERROR: Cannot convert audio sample {i} to numeric array. Type: {type(audio_array)}, dtype: {audio_array.dtype}")
-                        if len(audio_array) > 0:
-                            print(f"  First element type: {type(audio_array[0])}")
-                    # Return empty codes for this sample
-                    batch_codes.append([])
-                    continue
-        
-        # Ensure proper dtype for torch conversion
-        if audio_array.dtype not in [np.float32, np.float64, np.int16, np.int32]:
-            try:
-                audio_array = audio_array.astype(np.float32)
-            except:
                 if debug:
-                    print(f"ERROR: Cannot convert audio sample {i} to float32. dtype: {audio_array.dtype}")
+                    print(f"ERROR: Cannot extract audio array from sample {i}. Type: {type(audio_data)}")
                 batch_codes.append([])
                 continue
         
-        # Convert to tensor
-        try:
-            with torch.no_grad():
-                audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).unsqueeze(0)
-                audio_tensor = audio_tensor.to(device)
-        except Exception as e:
-            if debug:
-                print(f"ERROR converting sample {i} to tensor: {e}")
-                print(f"  Array shape: {audio_array.shape}, dtype: {audio_array.dtype}")
-            batch_codes.append([])
-            continue
+        # Ensure proper dtype for torch (should already be float32, but double-check)
+        if audio_array.dtype not in [np.float32, np.float64]:
+            audio_array = audio_array.astype(np.float32)
         
-        # Encode to VQ codes
+        # Convert to tensor and encode to VQ codes
         with torch.no_grad():
+            audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).unsqueeze(0)
+            audio_tensor = audio_tensor.to(device)
+            
+            # Encode to VQ codes
             vq_codes = codec.encode_code(audio_or_path=audio_tensor)
             vq_codes = vq_codes.squeeze(0).squeeze(0)
             
@@ -307,15 +253,13 @@ def process_dataset(
     
     # Use dataset.map with batching for efficient processing
     # NOTE: Must use num_proc=None (no multiprocessing) to avoid CUDA fork issues
-    print("⚠️ Note: Debug mode enabled for troubleshooting. Will show errors for problematic samples.")
-    print()
     processed_dataset = dataset.map(
         lambda batch: add_codes_batch(
             batch=batch,
             codec=codec,
             device=codec_device,
             force_reprocess=force_reprocess,
-            debug=True,  # Enable debug to see what's happening
+            debug=False,  # Set to True for troubleshooting
         ),
         batched=True,
         batch_size=batch_size,
