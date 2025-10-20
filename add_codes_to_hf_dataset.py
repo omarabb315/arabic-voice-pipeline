@@ -11,16 +11,21 @@ Usage:
     python add_codes_to_hf_dataset.py \
         --hf_repo=omarabb315/mix-1000 \
         --codec_device=cuda \
-        --batch_size=100 \
         --push_to_hub=True
 
     # Test with small sample first
     python add_codes_to_hf_dataset.py \
         --hf_repo=omarabb315/mix-1000 \
         --codec_device=cuda \
-        --batch_size=50 \
         --max_samples=100 \
         --push_to_hub=False
+
+    # Use larger batches for faster processing (if you have enough VRAM)
+    python add_codes_to_hf_dataset.py \
+        --hf_repo=omarabb315/mix-1000 \
+        --codec_device=cuda \
+        --batch_size=500 \
+        --push_to_hub=True
 
     # Force reprocess samples that already have codes
     python add_codes_to_hf_dataset.py \
@@ -92,13 +97,14 @@ def add_codes_batch(
     Returns:
         Dictionary with 'codes' key containing VQ codes
     """
-    # Check if codes already exist
+    # Check if codes already exist and are not empty
     if 'codes' in batch and not force_reprocess:
-        # Check if any sample in batch already has codes
+        # Check if any sample in batch already has non-empty codes
         existing_codes = batch['codes']
         if existing_codes and len(existing_codes) > 0:
-            # If first sample has codes, assume all do (skip batch)
-            if existing_codes[0] is not None and len(existing_codes[0]) > 0:
+            # Check if first sample has non-empty codes
+            first_code = existing_codes[0]
+            if first_code is not None and (isinstance(first_code, list) and len(first_code) > 0) or (isinstance(first_code, np.ndarray) and first_code.size > 0):
                 return batch
     
     # Extract audio arrays
@@ -138,7 +144,6 @@ def process_dataset(
     hf_repo: str,
     codec_device: str = "cuda" if torch.cuda.is_available() else "cpu",
     batch_size: int = 100,
-    num_proc: int = 4,
     max_samples: Optional[int] = None,
     force_reprocess: bool = False,
     push_to_hub: bool = True,
@@ -151,11 +156,14 @@ def process_dataset(
         hf_repo: HuggingFace repository name (e.g., 'username/dataset-name')
         codec_device: Device for NeuCodec ('cuda' or 'cpu')
         batch_size: Number of samples to process at once
-        num_proc: Number of processes for parallel processing
         max_samples: Maximum number of samples to process (None = all)
         force_reprocess: Reprocess samples that already have codes
         push_to_hub: Push updated dataset back to HuggingFace Hub
         split: Dataset split to process ('train', 'test', etc.)
+    
+    Note:
+        Multiprocessing is disabled (num_proc=None) to avoid CUDA fork issues.
+        Processing runs sequentially in batches for memory efficiency.
     """
     print("=" * 70)
     print("Add VQ Codes to HuggingFace Dataset")
@@ -173,10 +181,10 @@ def process_dataset(
     print(f"  Split: {split}")
     print(f"  Codec Device: {codec_device}")
     print(f"  Batch Size: {batch_size}")
-    print(f"  Num Processes: {num_proc}")
     print(f"  Max Samples: {max_samples if max_samples else 'All'}")
     print(f"  Force Reprocess: {force_reprocess}")
     print(f"  Push to Hub: {push_to_hub}")
+    print(f"  Multiprocessing: Disabled (CUDA compatibility)")
     print()
     
     # Load dataset
@@ -217,6 +225,7 @@ def process_dataset(
     print()
     
     # Use dataset.map with batching for efficient processing
+    # NOTE: Must use num_proc=None (no multiprocessing) to avoid CUDA fork issues
     processed_dataset = dataset.map(
         lambda batch: add_codes_batch(
             batch=batch,
@@ -226,7 +235,7 @@ def process_dataset(
         ),
         batched=True,
         batch_size=batch_size,
-        num_proc=1,  # Set to 1 to avoid GPU conflicts (NeuCodec is GPU-bound)
+        num_proc=None,  # Must be None - CUDA doesn't work with forked processes
         desc="Adding VQ codes",
         # Remove codes column if it exists, we'll add it fresh
         remove_columns=['codes'] if 'codes' in dataset.features and force_reprocess else [],
