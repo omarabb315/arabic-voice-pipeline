@@ -84,6 +84,7 @@ def add_codes_batch(
     codec: NeuCodec,
     device: str,
     force_reprocess: bool = False,
+    debug: bool = False,
 ) -> Dict[str, Any]:
     """
     Add VQ codes to a batch of samples.
@@ -111,8 +112,16 @@ def add_codes_batch(
     audio_arrays = batch['audio']
     batch_codes = []
     
+    # Debug: Print info about first batch (only once)
+    if debug and len(batch_codes) == 0:
+        print(f"DEBUG - Audio type: {type(audio_arrays)}")
+        if len(audio_arrays) > 0:
+            print(f"DEBUG - First audio type: {type(audio_arrays[0])}")
+            if isinstance(audio_arrays[0], dict):
+                print(f"DEBUG - First audio keys: {audio_arrays[0].keys()}")
+    
     # Process each audio in the batch
-    for audio_data in audio_arrays:
+    for i, audio_data in enumerate(audio_arrays):
         # Handle different audio formats from HuggingFace
         if isinstance(audio_data, dict):
             # Standard format: {'array': np.array, 'sampling_rate': 16000}
@@ -139,12 +148,49 @@ def add_codes_batch(
         if not isinstance(audio_array, np.ndarray):
             audio_array = np.array(audio_array)
         
+        # Check if array contains objects (not numeric data)
+        if audio_array.dtype == np.object_:
+            # Try to extract the actual numeric data
+            if len(audio_array) > 0 and hasattr(audio_array[0], '__array__'):
+                audio_array = np.concatenate([np.array(x) for x in audio_array])
+            else:
+                # Try flattening if it's nested
+                try:
+                    audio_array = np.array(audio_array.tolist(), dtype=np.float32)
+                except:
+                    # If all else fails, skip this sample and log error
+                    if debug:
+                        print(f"ERROR: Cannot convert audio sample {i} to numeric array. Type: {type(audio_array)}, dtype: {audio_array.dtype}")
+                        if len(audio_array) > 0:
+                            print(f"  First element type: {type(audio_array[0])}")
+                    # Return empty codes for this sample
+                    batch_codes.append([])
+                    continue
+        
+        # Ensure proper dtype for torch conversion
+        if audio_array.dtype not in [np.float32, np.float64, np.int16, np.int32]:
+            try:
+                audio_array = audio_array.astype(np.float32)
+            except:
+                if debug:
+                    print(f"ERROR: Cannot convert audio sample {i} to float32. dtype: {audio_array.dtype}")
+                batch_codes.append([])
+                continue
+        
         # Convert to tensor
+        try:
+            with torch.no_grad():
+                audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).unsqueeze(0)
+                audio_tensor = audio_tensor.to(device)
+        except Exception as e:
+            if debug:
+                print(f"ERROR converting sample {i} to tensor: {e}")
+                print(f"  Array shape: {audio_array.shape}, dtype: {audio_array.dtype}")
+            batch_codes.append([])
+            continue
+        
+        # Encode to VQ codes
         with torch.no_grad():
-            audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).unsqueeze(0)
-            audio_tensor = audio_tensor.to(device)
-            
-            # Encode to VQ codes
             vq_codes = codec.encode_code(audio_or_path=audio_tensor)
             vq_codes = vq_codes.squeeze(0).squeeze(0)
             
@@ -238,9 +284,16 @@ def process_dataset(
     # Ensure audio is decoded (important for batched processing)
     if 'audio' in dataset.features:
         print("Ensuring audio decoding is enabled...")
-        # Cast audio column to ensure it's decoded
-        dataset = dataset.cast_column('audio', Audio(sampling_rate=16000, decode=True))
-        print("✅ Audio decoding enabled")
+        # Set format to enable decoding
+        try:
+            # First try casting
+            dataset = dataset.cast_column('audio', Audio(sampling_rate=16000, decode=True))
+            print("✅ Audio decoding enabled via cast")
+        except Exception as e:
+            print(f"⚠️ Cast failed: {e}, trying alternative method...")
+            # Alternative: use with_format
+            dataset.set_format(type=None)  # Reset format to decode audio
+            print("✅ Audio format reset for decoding")
     print()
     
     # Load codec model
@@ -254,12 +307,15 @@ def process_dataset(
     
     # Use dataset.map with batching for efficient processing
     # NOTE: Must use num_proc=None (no multiprocessing) to avoid CUDA fork issues
+    print("⚠️ Note: Debug mode enabled for troubleshooting. Will show errors for problematic samples.")
+    print()
     processed_dataset = dataset.map(
         lambda batch: add_codes_batch(
             batch=batch,
             codec=codec,
             device=codec_device,
             force_reprocess=force_reprocess,
+            debug=True,  # Enable debug to see what's happening
         ),
         batched=True,
         batch_size=batch_size,
