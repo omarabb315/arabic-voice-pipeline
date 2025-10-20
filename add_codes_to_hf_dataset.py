@@ -115,9 +115,29 @@ def add_codes_batch(
     for audio_data in audio_arrays:
         # Handle different audio formats from HuggingFace
         if isinstance(audio_data, dict):
+            # Standard format: {'array': np.array, 'sampling_rate': 16000}
             audio_array = audio_data['array']
-        else:
+        elif hasattr(audio_data, '__getitem__') and not isinstance(audio_data, np.ndarray):
+            # AudioDecoder object - try to decode it by accessing as dict
+            try:
+                decoded = audio_data if isinstance(audio_data, dict) else dict(audio_data)
+                audio_array = decoded['array']
+            except:
+                # If that fails, try array attribute
+                audio_array = audio_data.array if hasattr(audio_data, 'array') else np.array(audio_data)
+        elif hasattr(audio_data, 'array'):
+            # Object with array attribute
+            audio_array = audio_data.array
+        elif isinstance(audio_data, np.ndarray):
+            # Already a numpy array
             audio_array = audio_data
+        else:
+            # Last resort: try to convert to numpy array
+            audio_array = np.array(audio_data)
+        
+        # Ensure it's a numpy array
+        if not isinstance(audio_array, np.ndarray):
+            audio_array = np.array(audio_array)
         
         # Convert to tensor
         with torch.no_grad():
@@ -213,6 +233,14 @@ def process_dataset(
             print(f"     Will skip samples that already have codes")
         else:
             print(f"     Will reprocess all samples (force_reprocess=True)")
+    print()
+    
+    # Ensure audio is decoded (important for batched processing)
+    if 'audio' in dataset.features:
+        print("Ensuring audio decoding is enabled...")
+        # Cast audio column to ensure it's decoded
+        dataset = dataset.cast_column('audio', Audio(sampling_rate=16000, decode=True))
+        print("✅ Audio decoding enabled")
     print()
     
     # Load codec model
