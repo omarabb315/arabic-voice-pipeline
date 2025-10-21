@@ -34,6 +34,20 @@ Usage:
         --max_duration_sec=200 \
         --push_to_hub=True
 
+    # Resume interrupted processing (automatically skips samples with codes)
+    # If processing is interrupted, just run the same command again
+    python add_codes_to_hf_dataset.py \
+        --hf_repo=omarabb315/mix-1000 \
+        --codec_device=cuda \
+        --push_to_hub=True
+
+    # Disable checkpoints (saves disk space)
+    python add_codes_to_hf_dataset.py \
+        --hf_repo=omarabb315/mix-1000 \
+        --codec_device=cuda \
+        --checkpoint_every=0 \
+        --push_to_hub=True
+
     # Force reprocess samples that already have codes
     python add_codes_to_hf_dataset.py \
         --hf_repo=omarabb315/mix-1000 \
@@ -41,15 +55,25 @@ Usage:
         --force_reprocess=True
 
 Workflow:
-    1. Download dataset from HuggingFace Hub
+    1. Download dataset from HuggingFace Hub (or load from checkpoint)
     2. Load NeuCodec model on GPU
     3. Process dataset in batches to add VQ codes
-    4. Push updated dataset back to HuggingFace Hub
+       - Automatically skips samples that already have codes (resume capability)
+       - Skips audio longer than max_duration_sec to prevent memory issues
+    4. Save checkpoint to disk (optional, for additional safety)
+    5. Push updated dataset back to HuggingFace Hub
+
+Resume Capability:
+    - If interrupted, just run the same command again
+    - Samples with existing codes are automatically skipped
+    - Checkpoint saved after processing for additional safety
+    - No data loss even if push to Hub fails
 
 Requirements:
     - HuggingFace account with login (huggingface-cli login)
     - Sufficient RAM for dataset (auto-cached by HF)
     - GPU with enough VRAM for NeuCodec (40GB+ recommended)
+    - Disk space for checkpoint (optional, ~same size as dataset)
 """
 
 import os
@@ -108,26 +132,25 @@ def add_codes_batch(
     Returns:
         Dictionary with 'codes' key containing VQ codes
     """
-    # Check if codes already exist and are not empty
-    if 'codes' in batch and not force_reprocess:
-        # Check if any sample in batch already has non-empty codes
-        existing_codes = batch['codes']
-        if existing_codes and len(existing_codes) > 0:
-            # Check if first sample has non-empty codes
-            first_code = existing_codes[0]
-            if first_code is not None and (isinstance(first_code, list) and len(first_code) > 0) or (isinstance(first_code, np.ndarray) and first_code.size > 0):
-                return batch
-    
-    # Extract audio arrays
+    # Extract audio arrays and existing codes (for resume functionality)
     audio_arrays = batch['audio']
+    existing_codes = batch.get('codes', [None] * len(audio_arrays))
     batch_codes = []
     
     # Process each audio in the batch
     for i, audio_data in enumerate(audio_arrays):
+        # Check if this sample already has codes (resume functionality)
+        if not force_reprocess and existing_codes and i < len(existing_codes):
+            existing_code = existing_codes[i]
+            # If codes exist and are non-empty, keep them
+            if existing_code is not None and len(existing_code) > 0:
+                batch_codes.append(existing_code)
+                continue
+        
         # Simply access the 'array' key - HuggingFace Audio feature always uses this format
         try:
             audio_array = audio_data['array']
-            sampling_rate = audio_data.get('sampling_rate', 16000)
+            sampling_rate = audio_data['sampling_rate']
         except (KeyError, TypeError):
             # Fallback: if not dict-like, try as numpy array directly
             if isinstance(audio_data, np.ndarray):
@@ -154,7 +177,6 @@ def add_codes_batch(
         # Convert to tensor and encode to VQ codes
         with torch.no_grad():
             audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).unsqueeze(0)
-            audio_tensor = audio_tensor.to(device)
             
             # Encode to VQ codes
             vq_codes = codec.encode_code(audio_or_path=audio_tensor)
@@ -165,9 +187,16 @@ def add_codes_batch(
             
             vq_codes_list = vq_codes.numpy().tolist()
             batch_codes.append(vq_codes_list)
+            
+            # Clean up tensors to prevent memory leak
+            del audio_tensor, vq_codes
     
     # Add codes to batch
     batch['codes'] = batch_codes
+    
+    # Clear GPU cache after each batch to prevent memory buildup
+    if device == "cuda":
+        torch.cuda.empty_cache()
     
     return batch
 
@@ -178,12 +207,14 @@ def process_dataset(
     batch_size: int = 100,
     max_samples: Optional[int] = None,
     max_duration_sec: float = 200.0,
+    checkpoint_every: int = 10000,
+    checkpoint_path: str = "checkpoint_dataset",
     force_reprocess: bool = False,
     push_to_hub: bool = True,
     split: str = "train",
 ):
     """
-    Main processing function.
+    Main processing function with resume capability.
     
     Args:
         hf_repo: HuggingFace repository name (e.g., 'username/dataset-name')
@@ -191,13 +222,17 @@ def process_dataset(
         batch_size: Number of samples to process at once
         max_samples: Maximum number of samples to process (None = all)
         max_duration_sec: Maximum audio duration to process (longer samples are skipped)
+        checkpoint_every: Save checkpoint every N samples (0 to disable)
+        checkpoint_path: Path to save checkpoints for resume capability
         force_reprocess: Reprocess samples that already have codes
         push_to_hub: Push updated dataset back to HuggingFace Hub
         split: Dataset split to process ('train', 'test', etc.)
     
     Note:
-        Multiprocessing is disabled (num_proc=None) to avoid CUDA fork issues.
-        Processing runs sequentially in batches for memory efficiency.
+        - Multiprocessing is disabled (num_proc=None) to avoid CUDA fork issues
+        - Processing runs sequentially in batches for memory efficiency
+        - Resume: If interrupted, rerun with same command - samples with codes are skipped
+        - Checkpoints: Saved every checkpoint_every samples for additional safety
     """
     print("=" * 70)
     print("Add VQ Codes to HuggingFace Dataset")
@@ -217,20 +252,40 @@ def process_dataset(
     print(f"  Batch Size: {batch_size}")
     print(f"  Max Samples: {max_samples if max_samples else 'All'}")
     print(f"  Max Duration: {max_duration_sec}s (longer samples will be skipped)")
+    print(f"  Checkpoint Every: {checkpoint_every if checkpoint_every > 0 else 'Disabled'}")
+    print(f"  Checkpoint Path: {checkpoint_path}")
     print(f"  Force Reprocess: {force_reprocess}")
     print(f"  Push to Hub: {push_to_hub}")
     print(f"  Multiprocessing: Disabled (CUDA compatibility)")
     print()
     
-    # Load dataset
-    print(f"Loading dataset from {hf_repo}...")
-    try:
-        dataset = load_dataset(hf_repo, split=split)
-        print(f"✅ Dataset loaded: {len(dataset):,} samples")
-    except Exception as e:
-        print(f"❌ Failed to load dataset: {e}")
-        print("   Make sure the repository exists and you have access.")
-        return
+    # Check if checkpoint exists (for resume)
+    checkpoint_file = Path(checkpoint_path)
+    if checkpoint_file.exists() and not force_reprocess:
+        print(f"📂 Found checkpoint at {checkpoint_path}")
+        print(f"   Loading from checkpoint to resume processing...")
+        try:
+            dataset = Dataset.load_from_disk(str(checkpoint_file))
+            print(f"✅ Checkpoint loaded: {len(dataset):,} samples")
+            print(f"   Samples with existing codes will be skipped")
+            print()
+        except Exception as e:
+            print(f"⚠️ Failed to load checkpoint: {e}")
+            print(f"   Loading from HuggingFace Hub instead...")
+            checkpoint_file = None
+    else:
+        checkpoint_file = None
+    
+    # Load dataset from Hub if no checkpoint
+    if checkpoint_file is None:
+        print(f"Loading dataset from {hf_repo}...")
+        try:
+            dataset = load_dataset(hf_repo, split=split)
+            print(f"✅ Dataset loaded: {len(dataset):,} samples")
+        except Exception as e:
+            print(f"❌ Failed to load dataset: {e}")
+            print("   Make sure the repository exists and you have access.")
+            return
     
     # Limit samples if specified (for testing)
     if max_samples:
@@ -310,6 +365,17 @@ def process_dataset(
     
     print()
     
+    # Save checkpoint before pushing (in case push fails)
+    if checkpoint_every > 0:
+        print(f"💾 Saving checkpoint to {checkpoint_path}...")
+        try:
+            processed_dataset.save_to_disk(checkpoint_path)
+            print(f"✅ Checkpoint saved successfully")
+            print()
+        except Exception as e:
+            print(f"⚠️ Failed to save checkpoint: {e}")
+            print()
+    
     # Push to hub if requested
     if push_to_hub:
         print(f"📤 Pushing updated dataset to {hf_repo}...")
@@ -321,10 +387,16 @@ def process_dataset(
             )
             print(f"✅ Dataset uploaded successfully!")
             print(f"   View at: https://huggingface.co/datasets/{hf_repo}")
+            print()
+            
+            # Suggest cleanup
+            if checkpoint_every > 0 and Path(checkpoint_path).exists():
+                print(f"💡 Tip: You can now safely delete the checkpoint to save disk space:")
+                print(f"   rm -rf {checkpoint_path}")
         except Exception as e:
             print(f"❌ Failed to push to Hub: {e}")
-            print("   The processed dataset is still available locally.")
-            print("   You can manually save it using dataset.save_to_disk()")
+            print("   The processed dataset is saved in checkpoint.")
+            print(f"   You can retry pushing later or manually push from {checkpoint_path}")
     else:
         print("ℹ️ Skipping push to Hub (push_to_hub=False)")
         print("   To save locally: dataset.save_to_disk('path/to/save')")
