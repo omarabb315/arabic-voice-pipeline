@@ -27,6 +27,13 @@ Usage:
         --batch_size=500 \
         --push_to_hub=True
 
+    # Skip audio longer than 200 seconds (default)
+    python add_codes_to_hf_dataset.py \
+        --hf_repo=omarabb315/mix-1000 \
+        --codec_device=cuda \
+        --max_duration_sec=200 \
+        --push_to_hub=True
+
     # Force reprocess samples that already have codes
     python add_codes_to_hf_dataset.py \
         --hf_repo=omarabb315/mix-1000 \
@@ -84,6 +91,7 @@ def add_codes_batch(
     codec: NeuCodec,
     device: str,
     force_reprocess: bool = False,
+    max_duration_sec: float = 200.0,
     debug: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -94,6 +102,8 @@ def add_codes_batch(
         codec: NeuCodec model
         device: Device to run encoding on
         force_reprocess: If True, reprocess even if codes exist
+        max_duration_sec: Maximum audio duration to process (longer samples are skipped)
+        debug: Enable debug output
     
     Returns:
         Dictionary with 'codes' key containing VQ codes
@@ -117,15 +127,25 @@ def add_codes_batch(
         # Simply access the 'array' key - HuggingFace Audio feature always uses this format
         try:
             audio_array = audio_data['array']
+            sampling_rate = audio_data.get('sampling_rate', 16000)
         except (KeyError, TypeError):
             # Fallback: if not dict-like, try as numpy array directly
             if isinstance(audio_data, np.ndarray):
                 audio_array = audio_data
+                sampling_rate = 16000
             else:
                 if debug:
                     print(f"ERROR: Cannot extract audio array from sample {i}. Type: {type(audio_data)}")
                 batch_codes.append([])
                 continue
+        
+        # Calculate duration and skip if too long (prevents memory issues)
+        duration_sec = len(audio_array) / sampling_rate
+        if duration_sec > max_duration_sec:
+            if debug:
+                print(f"⚠️ Skipping sample {i}: duration {duration_sec:.1f}s exceeds {max_duration_sec}s limit")
+            batch_codes.append([])
+            continue
         
         # Ensure proper dtype for torch (should already be float32, but double-check)
         if audio_array.dtype not in [np.float32, np.float64]:
@@ -157,6 +177,7 @@ def process_dataset(
     codec_device: str = "cuda" if torch.cuda.is_available() else "cpu",
     batch_size: int = 100,
     max_samples: Optional[int] = None,
+    max_duration_sec: float = 200.0,
     force_reprocess: bool = False,
     push_to_hub: bool = True,
     split: str = "train",
@@ -169,6 +190,7 @@ def process_dataset(
         codec_device: Device for NeuCodec ('cuda' or 'cpu')
         batch_size: Number of samples to process at once
         max_samples: Maximum number of samples to process (None = all)
+        max_duration_sec: Maximum audio duration to process (longer samples are skipped)
         force_reprocess: Reprocess samples that already have codes
         push_to_hub: Push updated dataset back to HuggingFace Hub
         split: Dataset split to process ('train', 'test', etc.)
@@ -194,6 +216,7 @@ def process_dataset(
     print(f"  Codec Device: {codec_device}")
     print(f"  Batch Size: {batch_size}")
     print(f"  Max Samples: {max_samples if max_samples else 'All'}")
+    print(f"  Max Duration: {max_duration_sec}s (longer samples will be skipped)")
     print(f"  Force Reprocess: {force_reprocess}")
     print(f"  Push to Hub: {push_to_hub}")
     print(f"  Multiprocessing: Disabled (CUDA compatibility)")
@@ -259,6 +282,7 @@ def process_dataset(
             codec=codec,
             device=codec_device,
             force_reprocess=force_reprocess,
+            max_duration_sec=max_duration_sec,
             debug=False,  # Set to True for troubleshooting
         ),
         batched=True,
