@@ -349,6 +349,7 @@ def process_dataset(
     # NOTE: Must use num_proc=None (no multiprocessing) to avoid CUDA fork issues
     print("⚠️ Debug mode enabled - will show when samples are skipped")
     print()
+    
     processed_dataset = dataset.map(
         lambda batch: add_codes_batch(
             batch=batch,
@@ -356,14 +357,14 @@ def process_dataset(
             device=codec_device,
             force_reprocess=force_reprocess,
             max_duration_sec=max_duration_sec,
-            debug=True,  # Enable to see skipped samples
+            debug=True,
         ),
         batched=True,
         batch_size=batch_size,
         num_proc=None,  # Must be None - CUDA doesn't work with forked processes
         desc="Adding VQ codes",
-        # Remove codes column if it exists, we'll add it fresh
-        remove_columns=['codes'] if 'codes' in dataset.features and force_reprocess else [],
+        # NEVER remove codes column - we need it for resume capability
+        remove_columns=[],
     )
     
     print()
