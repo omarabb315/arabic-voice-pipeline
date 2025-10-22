@@ -151,16 +151,32 @@ def add_codes_batch(
         try:
             audio_array = audio_data['array']
             sampling_rate = audio_data['sampling_rate']
-        except (KeyError, TypeError):
+        except (KeyError, TypeError) as e:
             # Fallback: if not dict-like, try as numpy array directly
             if isinstance(audio_data, np.ndarray):
                 audio_array = audio_data
                 sampling_rate = 16000
             else:
                 if debug:
-                    print(f"ERROR: Cannot extract audio array from sample {i}. Type: {type(audio_data)}")
+                    print(f"ERROR: Cannot extract audio array from sample {i}. Type: {type(audio_data)}, Error: {e}")
                 batch_codes.append([])
                 continue
+        except RuntimeError as e:
+            # Handle corrupted/empty audio files that can't be decoded
+            if "No audio frames were decoded" in str(e):
+                if debug:
+                    print(f"⚠️ Skipping sample {i}: Corrupted or empty audio file")
+                batch_codes.append([])
+                continue
+            else:
+                # Re-raise if it's a different RuntimeError
+                raise
+        except Exception as e:
+            # Catch any other audio decoding errors
+            if debug:
+                print(f"⚠️ Skipping sample {i}: Audio decoding error: {e}")
+            batch_codes.append([])
+            continue
         
         # Calculate duration and skip if too long (prevents memory issues)
         duration_sec = len(audio_array) / sampling_rate
@@ -331,6 +347,8 @@ def process_dataset(
     
     # Use dataset.map with batching for efficient processing
     # NOTE: Must use num_proc=None (no multiprocessing) to avoid CUDA fork issues
+    print("⚠️ Debug mode enabled - will show when samples are skipped")
+    print()
     processed_dataset = dataset.map(
         lambda batch: add_codes_batch(
             batch=batch,
@@ -338,7 +356,7 @@ def process_dataset(
             device=codec_device,
             force_reprocess=force_reprocess,
             max_duration_sec=max_duration_sec,
-            debug=False,  # Set to True for troubleshooting
+            debug=True,  # Enable to see skipped samples
         ),
         batched=True,
         batch_size=batch_size,
