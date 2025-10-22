@@ -83,7 +83,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Dict, Any
 from tqdm import tqdm
-from datasets import load_dataset, Dataset, Audio, Features, Value, Sequence
+from datasets import load_dataset, Dataset, Audio, Features, Value, Sequence, concatenate_datasets
 from neucodec import NeuCodec
 from fire import Fire
 
@@ -345,27 +345,83 @@ def process_dataset(
     print(f"This may take several hours for large datasets...")
     print()
     
-    # Use dataset.map with batching for efficient processing
+    # Process with incremental checkpointing
     # NOTE: Must use num_proc=None (no multiprocessing) to avoid CUDA fork issues
     print("⚠️ Debug mode enabled - will show when samples are skipped")
+    if checkpoint_every > 0:
+        print(f"💾 Incremental checkpointing enabled - saving every {checkpoint_every:,} samples")
     print()
     
-    processed_dataset = dataset.map(
-        lambda batch: add_codes_batch(
-            batch=batch,
-            codec=codec,
-            device=codec_device,
-            force_reprocess=force_reprocess,
-            max_duration_sec=max_duration_sec,
-            debug=True,
-        ),
-        batched=True,
-        batch_size=batch_size,
-        num_proc=None,  # Must be None - CUDA doesn't work with forked processes
-        desc="Adding VQ codes",
-        # NEVER remove codes column - we need it for resume capability
-        remove_columns=[],
-    )
+    # Process in chunks with checkpointing
+    if checkpoint_every > 0:
+        total_samples = len(dataset)
+        processed_samples = 0
+        
+        # Process in chunks
+        while processed_samples < total_samples:
+            chunk_end = min(processed_samples + checkpoint_every, total_samples)
+            chunk_size = chunk_end - processed_samples
+            
+            print(f"Processing samples {processed_samples:,} to {chunk_end:,} ({chunk_size:,} samples)...")
+            
+            # Select chunk to process
+            chunk_dataset = dataset.select(range(processed_samples, chunk_end))
+            
+            # Process this chunk
+            processed_chunk = chunk_dataset.map(
+                lambda batch: add_codes_batch(
+                    batch=batch,
+                    codec=codec,
+                    device=codec_device,
+                    force_reprocess=force_reprocess,
+                    max_duration_sec=max_duration_sec,
+                    debug=True,
+                ),
+                batched=True,
+                batch_size=batch_size,
+                num_proc=None,
+                desc=f"Chunk {processed_samples//checkpoint_every + 1}",
+                remove_columns=[],
+            )
+            
+            # Update the dataset with processed chunk
+            if processed_samples == 0:
+                # First chunk - initialize processed_dataset
+                processed_dataset = processed_chunk
+            else:
+                # Subsequent chunks - concatenate
+                processed_dataset = concatenate_datasets([processed_dataset, processed_chunk])
+            
+            processed_samples = chunk_end
+            
+            # Save checkpoint after each chunk
+            print(f"💾 Saving checkpoint at {processed_samples:,}/{total_samples:,} samples...")
+            try:
+                processed_dataset.save_to_disk(checkpoint_path)
+                print(f"✅ Checkpoint saved to {checkpoint_path}")
+            except Exception as e:
+                print(f"⚠️ Failed to save checkpoint: {e}")
+            print()
+        
+        print("✅ All chunks processed!")
+    else:
+        # No checkpointing - process all at once
+        print("⚠️ Checkpointing disabled - processing entire dataset at once")
+        processed_dataset = dataset.map(
+            lambda batch: add_codes_batch(
+                batch=batch,
+                codec=codec,
+                device=codec_device,
+                force_reprocess=force_reprocess,
+                max_duration_sec=max_duration_sec,
+                debug=True,
+            ),
+            batched=True,
+            batch_size=batch_size,
+            num_proc=None,
+            desc="Adding VQ codes",
+            remove_columns=[],
+        )
     
     print()
     print("✅ Processing complete!")
@@ -384,16 +440,21 @@ def process_dataset(
     
     print()
     
-    # Save checkpoint before pushing (in case push fails)
+    # Save final checkpoint before pushing (in case push fails)
+    # Note: If incremental checkpointing was enabled, this is already saved
     if checkpoint_every > 0:
-        print(f"💾 Saving checkpoint to {checkpoint_path}...")
+        print(f"💾 Saving final checkpoint to {checkpoint_path}...")
         try:
             processed_dataset.save_to_disk(checkpoint_path)
-            print(f"✅ Checkpoint saved successfully")
+            print(f"✅ Final checkpoint saved successfully")
             print()
         except Exception as e:
-            print(f"⚠️ Failed to save checkpoint: {e}")
+            print(f"⚠️ Failed to save final checkpoint: {e}")
             print()
+    elif checkpoint_every == 0:
+        # User disabled checkpointing but we still recommend saving before push
+        print("ℹ️ No checkpoint saved (checkpoint_every=0)")
+        print()
     
     # Push to hub if requested
     if push_to_hub:
