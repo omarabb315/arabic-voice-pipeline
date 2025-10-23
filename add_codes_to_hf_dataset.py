@@ -178,6 +178,13 @@ def add_codes_batch(
             batch_codes.append([])
             continue
         
+        # Check if audio is empty (prevents codec errors)
+        if len(audio_array) == 0:
+            if debug:
+                print(f"⚠️ Skipping sample {i}: Empty audio array")
+            batch_codes.append([])
+            continue
+        
         # Calculate duration and skip if too long (prevents memory issues)
         duration_sec = len(audio_array) / sampling_rate
         if duration_sec > max_duration_sec:
@@ -186,26 +193,46 @@ def add_codes_batch(
             batch_codes.append([])
             continue
         
+        # Skip if audio is too short (less than 0.1 seconds)
+        if duration_sec < 0.1:
+            if debug:
+                print(f"⚠️ Skipping sample {i}: duration {duration_sec:.3f}s too short (< 0.1s)")
+            batch_codes.append([])
+            continue
+        
         # Ensure proper dtype for torch (should already be float32, but double-check)
         if audio_array.dtype not in [np.float32, np.float64]:
             audio_array = audio_array.astype(np.float32)
         
         # Convert to tensor and encode to VQ codes
-        with torch.no_grad():
-            audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).unsqueeze(0)
-            
-            # Encode to VQ codes
-            vq_codes = codec.encode_code(audio_or_path=audio_tensor)
-            vq_codes = vq_codes.squeeze(0).squeeze(0)
-            
-            if vq_codes.is_cuda:
-                vq_codes = vq_codes.cpu()
-            
-            vq_codes_list = vq_codes.numpy().tolist()
-            batch_codes.append(vq_codes_list)
-            
-            # Clean up tensors to prevent memory leak
-            del audio_tensor, vq_codes
+        try:
+            with torch.no_grad():
+                audio_tensor = torch.from_numpy(audio_array).float().unsqueeze(0).unsqueeze(0)
+                
+                # Encode to VQ codes
+                vq_codes = codec.encode_code(audio_or_path=audio_tensor)
+                vq_codes = vq_codes.squeeze(0).squeeze(0)
+                
+                if vq_codes.is_cuda:
+                    vq_codes = vq_codes.cpu()
+                
+                vq_codes_list = vq_codes.numpy().tolist()
+                batch_codes.append(vq_codes_list)
+                
+                # Clean up tensors to prevent memory leak
+                del audio_tensor, vq_codes
+        except RuntimeError as e:
+            # Handle codec errors (e.g., "Kernel size can't be greater than actual input size")
+            if debug:
+                print(f"⚠️ Skipping sample {i}: Codec encoding error - {e}")
+            batch_codes.append([])
+            continue
+        except Exception as e:
+            # Catch any other encoding errors
+            if debug:
+                print(f"⚠️ Skipping sample {i}: Unexpected encoding error - {e}")
+            batch_codes.append([])
+            continue
     
     # Add codes to batch
     batch['codes'] = batch_codes
