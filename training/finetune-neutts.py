@@ -47,6 +47,11 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     speech_gen_start = tokenizer.convert_tokens_to_ids('<|SPEECH_GENERATION_START|>')
     ignore_index = -100  # this is from LLaMA
 
+    # Define valid values for validation
+    VALID_GENDERS = ['male', 'female', 'unknown']
+    VALID_DIALECTS = ['MSA', 'Egyptian', 'Levantine', 'Gulf', 'Iraqi', 'Maghrebi', 'Yemeni', 'Sudanese', 'unknown']
+    VALID_TONES = ['neutral', 'formal', 'conversational', 'enthusiastic', 'analytical', 'empathetic', 'serious', 'humorous']
+
     # unpack paired sample
     ref_codes = sample["ref_codes"]
     ref_text = sample["ref_text"]
@@ -59,6 +64,27 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     target_gender = sample["target_gender"]
     target_dialect = sample["target_dialect"]
     target_tone = sample["target_tone"]
+    
+    # Validate and map invalid values to "unknown"
+    if ref_gender not in VALID_GENDERS:
+        LOGGER.warning(f"⚠️ Invalid ref_gender '{ref_gender}', mapping to 'unknown'")
+        ref_gender = "unknown"
+    if ref_dialect not in VALID_DIALECTS:
+        LOGGER.warning(f"⚠️ Invalid ref_dialect '{ref_dialect}', mapping to 'unknown'")
+        ref_dialect = "unknown"
+    if ref_tone not in VALID_TONES:
+        LOGGER.warning(f"⚠️ Invalid ref_tone '{ref_tone}', mapping to 'unknown'")
+        ref_tone = "unknown"
+    
+    if target_gender not in VALID_GENDERS:
+        LOGGER.warning(f"⚠️ Invalid target_gender '{target_gender}', mapping to 'unknown'")
+        target_gender = "unknown"
+    if target_dialect not in VALID_DIALECTS:
+        LOGGER.warning(f"⚠️ Invalid target_dialect '{target_dialect}', mapping to 'unknown'")
+        target_dialect = "unknown"
+    if target_tone not in VALID_TONES:
+        LOGGER.warning(f"⚠️ Invalid target_tone '{target_tone}', mapping to 'unknown'")
+        target_tone = "unknown"
 
     # phonemize reference and target
     ref_phones = g2p.phonemize([ref_text])
@@ -128,15 +154,12 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
 
 
 def add_conditioning_tokens(tokenizer, dataset_path):
-    """Add conditioning tokens from the dataset to the tokenizer."""
+    """Add conditioning tokens from predefined attributes to the tokenizer."""
     
-    # Load a sample of the dataset to extract unique values
-    dataset = load_from_disk(dataset_path)
-    
-    # Collect unique conditioning values
-    genders = set(dataset['ref_gender']) | set(dataset['target_gender'])
-    dialects = set(dataset['ref_dialect']) | set(dataset['target_dialect'])
-    tones = set(dataset['ref_tone']) | set(dataset['target_tone'])
+    # Define supported conditioning values
+    genders = ['male', 'female', 'unknown']
+    dialects = ['MSA', 'Egyptian', 'Levantine', 'Gulf', 'Iraqi', 'Maghrebi', 'Yemeni', 'Sudanese', 'unknown']
+    tones = ['neutral', 'formal', 'conversational', 'enthusiastic', 'analytical', 'empathetic', 'serious', 'humorous']
     
     # Create special tokens
     special_tokens = []
