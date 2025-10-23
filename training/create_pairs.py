@@ -124,7 +124,7 @@ def load_segments_from_hf_dataset(dataset_path: str, min_duration: float = 0.5, 
     )
     print(f"Segments after duration filter: {len(dataset):,}")
     
-    print("Filtering out segments with invalid codes...")
+    print("Filtering out segments with empty codes...")
     dataset = dataset.filter(
         lambda x: x['codes'] is not None and len(x['codes']) > 0
     )
@@ -190,15 +190,33 @@ def create_paired_dataset(
         print("❌ No valid segments found. Check your data and filters.")
         return
     
-    # Group by (channel, speaker_id)
-    print("\nGrouping segments by (channel, speaker_id)...")
-    speaker_groups = defaultdict(list)
+    # Check if audio_id field exists in dataset
+    has_audio_id = 'audio_id' in segments[0]
     
-    for idx, sample in enumerate(tqdm(segments, desc="Grouping")):
-        key = (sample['channel'], sample['speaker_id'])
-        speaker_groups[key].append(idx)
-    
-    print(f"Found {len(speaker_groups)} unique (channel, speaker_id) combinations")
+    # Group by unique speaker identity
+    # Note: speaker_id is incremental per audio file, so we need audio_id to ensure uniqueness
+    if has_audio_id:
+        print("\nGrouping segments by (audio_id, speaker_id) to ensure speaker uniqueness...")
+        speaker_groups = defaultdict(list)
+        
+        for idx, sample in enumerate(tqdm(segments, desc="Grouping")):
+            # Extract base audio_id (remove _seg_X suffix if present)
+            audio_id_full = sample['audio_id']
+            audio_id_base = audio_id_full.rsplit('_seg_', 1)[0] if '_seg_' in audio_id_full else audio_id_full
+            key = (audio_id_base, sample['speaker_id'])
+            speaker_groups[key].append(idx)
+        
+        print(f"Found {len(speaker_groups)} unique (audio_id, speaker_id) combinations")
+    else:
+        print("\n⚠️  WARNING: No 'audio_id' field found. Falling back to (channel, speaker_id) grouping.")
+        print("   This may cause issues if speaker_id is not globally unique!")
+        speaker_groups = defaultdict(list)
+        
+        for idx, sample in enumerate(tqdm(segments, desc="Grouping")):
+            key = (sample['channel'], sample['speaker_id'])
+            speaker_groups[key].append(idx)
+        
+        print(f"Found {len(speaker_groups)} unique (channel, speaker_id) combinations")
     
     # Filter speakers with insufficient segments
     print(f"\nFiltering speakers with < {min_segments_per_speaker} segments...")
