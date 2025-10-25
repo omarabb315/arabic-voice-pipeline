@@ -116,11 +116,22 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
 
     # get chat format (matching _infer_ggml style)
     chat = f"""<|TEXT_PROMPT_START|>{combined_text}<|TEXT_PROMPT_END|><|SPEECH_GENERATION_START|>{combined_codes_str}<|SPEECH_GENERATION_END|>"""
-    ids = tokenizer.encode(chat)
-
-    # Truncate if exceeds max_len (but don't pad - let DataCollator handle padding dynamically)
-    if len(ids) > max_len:
-        ids = ids[:max_len]
+    
+    # Use tokenizer with truncation to avoid warnings
+    encoding = tokenizer(
+        chat,
+        truncation=True,
+        max_length=max_len,
+        add_special_tokens=False,
+        return_attention_mask=False,
+    )
+    ids = encoding['input_ids']
+    
+    # If sequence was too long and got truncated, mark as invalid
+    # (We want complete samples, not truncated ones)
+    if len(ids) >= max_len:
+        LOGGER.warning(f"⚠️ Sample exceeds max_len ({len(ids)} >= {max_len}), skipping")
+        return {"valid": False}
 
     # Label masking: only train on TARGET codes
     labels = [ignore_index] * len(ids)
@@ -227,12 +238,17 @@ def main(config_fpath: str):
     paired_dataset = paired_dataset.map(
         partial_preprocess, 
         remove_columns=remove_cols,
+        num_proc=40,
         desc="Preprocessing"
     )
     
     # Filter out invalid samples (samples that failed preprocessing)
     original_size = len(paired_dataset)
-    paired_dataset = paired_dataset.filter(lambda x: x["valid"] == True)
+    paired_dataset = paired_dataset.filter(
+        lambda x: x["valid"] == True,
+        num_proc=40,
+        desc="Filtering valid samples"
+    )
     filtered_size = len(paired_dataset)
     if filtered_size < original_size:
         print(f"Filtered out {original_size - filtered_size} failed samples. {filtered_size} samples remaining.")
