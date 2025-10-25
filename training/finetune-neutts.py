@@ -93,11 +93,11 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     # SAFE CHECK
     if not ref_phones or not ref_phones[0]:
         LOGGER.warning(f"⚠️ Empty phonemization output for ref_text: {ref_text}")
-        return None
+        return {"valid": False}
     
     if not target_phones or not target_phones[0]:
         LOGGER.warning(f"⚠️ Empty phonemization output for target_text: {target_text}")
-        return None
+        return {"valid": False}
 
     ref_phones = ' '.join(ref_phones[0].split())
     target_phones = ' '.join(target_phones[0].split())
@@ -141,7 +141,7 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     except ValueError:
         # speech_gen_start not found, skip this sample
         LOGGER.warning(f"⚠️ Could not find SPEECH_GENERATION_START token, skipping sample")
-        return None
+        return {"valid": False}
 
     # create attention mask
     attention_mask = [1 if token_id != tokenizer.pad_token_id else 0 for token_id in ids]
@@ -151,6 +151,7 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
         "input_ids": ids,
         "labels": labels,
         "attention_mask": attention_mask,
+        "valid": True,
     }
 
 
@@ -234,12 +235,15 @@ def main(config_fpath: str):
         desc="Preprocessing"
     )
     
-    # Filter out None samples (samples that failed preprocessing)
+    # Filter out invalid samples (samples that failed preprocessing)
     original_size = len(paired_dataset)
-    paired_dataset = paired_dataset.filter(lambda x: x["input_ids"] is not None)
+    paired_dataset = paired_dataset.filter(lambda x: x["valid"] == True)
     filtered_size = len(paired_dataset)
     if filtered_size < original_size:
         print(f"Filtered out {original_size - filtered_size} failed samples. {filtered_size} samples remaining.")
+    
+    # Remove the 'valid' column as it's no longer needed
+    paired_dataset = paired_dataset.remove_columns(["valid"])
 
     training_args = TrainingArguments(
         output_dir=checkpoints_dir,
