@@ -124,30 +124,31 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     else:
         ids = ids[:max_len]
 
-    # convert to tensor
-    input_ids = torch.tensor(ids, dtype=torch.long)
-
     # Label masking: only train on TARGET codes
-    labels = torch.full_like(input_ids, ignore_index)
-    speech_gen_start_idx = (input_ids == speech_gen_start).nonzero(as_tuple=True)[0]
+    labels = [ignore_index] * len(ids)
     
-    if len(speech_gen_start_idx) > 0:
-        speech_gen_start_idx = speech_gen_start_idx[0].item()
+    # Find speech generation start token position
+    try:
+        speech_gen_start_idx = ids.index(speech_gen_start)
         
         # Find where target codes start by encoding ref codes
         ref_codes_ids = tokenizer.encode(ref_codes_str, add_special_tokens=False)
         target_start_idx = speech_gen_start_idx + 1 + len(ref_codes_ids)
         
         # Only unmask target codes (and end token)
-        if target_start_idx < len(input_ids):
-            labels[target_start_idx:] = input_ids[target_start_idx:]
+        if target_start_idx < len(ids):
+            labels[target_start_idx:] = ids[target_start_idx:]
+    except ValueError:
+        # speech_gen_start not found, skip this sample
+        LOGGER.warning(f"⚠️ Could not find SPEECH_GENERATION_START token, skipping sample")
+        return None
 
     # create attention mask
-    attention_mask = (input_ids != tokenizer.pad_token_id).long()
+    attention_mask = [1 if token_id != tokenizer.pad_token_id else 0 for token_id in ids]
 
-    # return in hf format
+    # return in hf format as lists (not tensors)
     return {
-        "input_ids": input_ids,
+        "input_ids": ids,
         "labels": labels,
         "attention_mask": attention_mask,
     }
@@ -179,6 +180,9 @@ def add_conditioning_tokens(tokenizer, dataset_path):
 
 
 def main(config_fpath: str):
+    
+    # Set environment variable to suppress tokenizers parallelism warning
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     # load config
     print(f"Loading config from {config_fpath}")
@@ -229,6 +233,13 @@ def main(config_fpath: str):
         remove_columns=remove_cols,
         desc="Preprocessing"
     )
+    
+    # Filter out None samples (samples that failed preprocessing)
+    original_size = len(paired_dataset)
+    paired_dataset = paired_dataset.filter(lambda x: x["input_ids"] is not None)
+    filtered_size = len(paired_dataset)
+    if filtered_size < original_size:
+        print(f"Filtered out {original_size - filtered_size} failed samples. {filtered_size} samples remaining.")
 
     training_args = TrainingArguments(
         output_dir=checkpoints_dir,
