@@ -8,7 +8,7 @@ import phonemizer
 from fire import Fire
 from omegaconf import OmegaConf
 from functools import partial
-from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments, default_data_collator
+from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments, DataCollatorForSeq2Seq
 from loguru import logger as LOGGER
 from datasets import load_dataset, load_from_disk
 
@@ -118,10 +118,8 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     chat = f"""<|TEXT_PROMPT_START|>{combined_text}<|TEXT_PROMPT_END|><|SPEECH_GENERATION_START|>{combined_codes_str}<|SPEECH_GENERATION_END|>"""
     ids = tokenizer.encode(chat)
 
-    # pad to make seq len
-    if len(ids) < max_len:
-        ids = ids + [tokenizer.pad_token_id] * (max_len - len(ids))
-    else:
+    # Truncate if exceeds max_len (but don't pad - let DataCollator handle padding dynamically)
+    if len(ids) > max_len:
         ids = ids[:max_len]
 
     # Label masking: only train on TARGET codes
@@ -143,14 +141,11 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
         LOGGER.warning(f"⚠️ Could not find SPEECH_GENERATION_START token, skipping sample")
         return {"valid": False}
 
-    # create attention mask
-    attention_mask = [1 if token_id != tokenizer.pad_token_id else 0 for token_id in ids]
-
     # return in hf format as lists (not tensors)
+    # DataCollatorForSeq2Seq will handle padding and attention masks dynamically
     return {
         "input_ids": ids,
         "labels": labels,
-        "attention_mask": attention_mask,
         "valid": True,
     }
 
@@ -263,12 +258,20 @@ def main(config_fpath: str):
         dataloader_num_workers=64,
     )
 
+    # Create data collator for dynamic padding
+    data_collator = DataCollatorForSeq2Seq(
+        tokenizer=tokenizer,
+        model=model,
+        label_pad_token_id=-100,
+        pad_to_multiple_of=8,  # For better GPU efficiency
+    )
+
     trainer = Trainer(
         model=model,
         tokenizer=tokenizer,
         args=training_args,
         train_dataset=paired_dataset,
-        data_collator=default_data_collator,
+        data_collator=data_collator,
     )
     trainer.train()
     trainer.save_model(checkpoints_dir)
