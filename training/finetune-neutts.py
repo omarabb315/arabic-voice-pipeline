@@ -4,6 +4,8 @@ import re
 import os
 import torch
 import phonemizer
+import wandb
+
 
 from fire import Fire
 from omegaconf import OmegaConf
@@ -89,15 +91,18 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     # phonemize reference and target
     ref_phones = g2p.phonemize([ref_text])
     target_phones = g2p.phonemize([target_text])
+    
+    # This is the dictionary to return on failure
+    invalid_sample_output = {"input_ids": [], "labels": [], "valid": False}
 
     # SAFE CHECK
     if not ref_phones or not ref_phones[0]:
         LOGGER.warning(f"⚠️ Empty phonemization output for ref_text: {ref_text}")
-        return {"valid": False}
+        return invalid_sample_output
     
     if not target_phones or not target_phones[0]:
         LOGGER.warning(f"⚠️ Empty phonemization output for target_text: {target_text}")
-        return {"valid": False}
+        return invalid_sample_output
 
     ref_phones = ' '.join(ref_phones[0].split())
     target_phones = ' '.join(target_phones[0].split())
@@ -131,7 +136,7 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     # (We want complete samples, not truncated ones)
     if len(ids) >= max_len:
         LOGGER.warning(f"⚠️ Sample exceeds max_len ({len(ids)} >= {max_len}), skipping")
-        return {"valid": False}
+        return invalid_sample_output
 
     # Label masking: only train on TARGET codes
     labels = [ignore_index] * len(ids)
@@ -150,7 +155,7 @@ def preprocess_sample(sample, tokenizer, max_len, g2p):
     except ValueError:
         # speech_gen_start not found, skip this sample
         LOGGER.warning(f"⚠️ Could not find SPEECH_GENERATION_START token, skipping sample")
-        return {"valid": False}
+        return invalid_sample_output
 
     # return in hf format as lists (not tensors)
     # DataCollatorForSeq2Seq will handle padding and attention masks dynamically
@@ -207,7 +212,9 @@ def main(config_fpath: str):
     num_added = add_conditioning_tokens(tokenizer, paired_dataset_path)
     
     # Load model
-    model = AutoModelForCausalLM.from_pretrained(restore_from, torch_dtype="auto")
+    model = AutoModelForCausalLM.from_pretrained(restore_from,
+                                                 torch_dtype="auto",)
+                                                 # attn_implementation="eager")
     
     # Resize model embeddings if tokens were added
     if num_added > 0:
@@ -233,11 +240,13 @@ def main(config_fpath: str):
     paired_dataset = load_from_disk(paired_dataset_path)
     print(f"Loaded {len(paired_dataset)} training pairs")
     
-    # Preprocess dataset (remove audio columns to save memory during training)
-    remove_cols = ["ref_audio", "target_audio"]
+    # Preprocess dataset. We need to remove all original columns because the
+    # data collator cannot turn them into tensors.
+    # The map function will add the new columns: 'input_ids', 'labels', 'valid'.
+    original_columns = paired_dataset.column_names
     paired_dataset = paired_dataset.map(
         partial_preprocess, 
-        remove_columns=remove_cols,
+        remove_columns=original_columns, # <--- KEY CHANGE: Remove ALL original columns
         num_proc=40,
         desc="Preprocessing"
     )
@@ -256,13 +265,31 @@ def main(config_fpath: str):
     # Remove the 'valid' column as it's no longer needed
     paired_dataset = paired_dataset.remove_columns(["valid"])
 
+    wandb.init(
+        project="NeuTTS",
+        name="mix-Atheer-Zad-Tham",
+        config={
+            "model": config.restore_from,
+            "train_dataset": "omarabb315/1000-mix",
+            # "val_dataset": "1000_samples",
+            "train_size": len(paired_dataset),
+            # "val_size": len(dataset['test']),
+            "learning_rate": config.lr,
+            "batch_size": config.per_device_train_batch_size,
+            "epochs": config.num_train_epochs,
+        }
+    )
+    # e41494f77c004f34b137273ed335682eec0cc330
+    
     training_args = TrainingArguments(
         output_dir=checkpoints_dir,
         do_train=True,
         learning_rate=config.lr,
         max_steps=config.max_steps,
         bf16=True,
+        # no_cuda=True, 
         per_device_train_batch_size=config.per_device_train_batch_size,
+        gradient_accumulation_steps=config.gradient_accumulation_steps,
         warmup_ratio=config.warmup_ratio,
         save_steps=config.save_steps,
         logging_steps=config.logging_steps,
@@ -270,8 +297,10 @@ def main(config_fpath: str):
         ignore_data_skip=True,
         dataloader_drop_last=True,
         remove_unused_columns=False,
-        torch_compile=True,
-        dataloader_num_workers=64,
+        # torch_compile=True,
+        num_train_epochs = config.num_train_epochs,
+        report_to=["tensorboard", "wandb"], 
+        # dataloader_num_workers=64,
     )
 
     # Create data collator for dynamic padding
