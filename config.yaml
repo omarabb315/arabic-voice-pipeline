@@ -16,7 +16,8 @@ channels:
 
 # Dataset paths (local storage on VM)
 segments_dataset_path: "dataset_cache/segments_dataset/"
-paired_dataset_path: "dataset_cache/paired_dataset/"
+# paired_dataset_path: "dataset_cache/paired_dataset/"
+paired_dataset_path: "/home/jovyan/work/paired_dataset"
 
 # ============================================================================
 # Data Filtering Parameters
@@ -55,17 +56,23 @@ run_name: "voice_cloning_run_1"
 lr: 1.0e-5
 
 # Training steps
-max_steps: 10000
+max_steps: -1
 
 # Batch size
-per_device_train_batch_size: 4
+per_device_train_batch_size: 8
+
+# Gradient Accumulation Steps
+gradient_accumulation_steps: 8
 
 # Warmup
-warmup_ratio: 0.1
+warmup_ratio: 0.05
 
 # Checkpointing
 save_steps: 500
 logging_steps: 10
+
+# Number of Epochs
+num_train_epochs: 1
 
 # ============================================================================
 # Hardware Configuration
