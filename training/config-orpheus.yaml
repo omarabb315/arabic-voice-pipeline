@@ -1,0 +1,42 @@
+# Orpheus Voice Cloning Fine-tuning Configuration
+
+# Model settings
+restore_from: "unsloth/orpheus-3b-0.1-ft"  # or path to your checkpoint
+max_seq_len: 4096
+
+# Dataset settings
+paired_dataset_path: "dataset_cache/paired_dataset/"
+
+# Training settings
+save_root: "checkpoints/"
+run_name: "orpheus-arabic-voice-cloning"
+
+# Hyperparameters
+lr: 1.0e-4
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 8
+num_train_epochs: 3
+max_steps: -1  # -1 means use num_train_epochs
+
+# LoRA settings (set use_lora to false for full fine-tuning)
+use_lora: true  # Set to false for full fine-tuning (requires more memory)
+lora_r: 64  # Only used if use_lora is true
+lora_alpha: 64  # Only used if use_lora is true
+load_in_4bit: false  # Set to true for memory-constrained environments
+
+# Optimization
+warmup_ratio: 0.05
+weight_decay: 0.01
+lr_scheduler_type: "cosine"
+
+# Checkpointing
+save_steps: 500
+logging_steps: 1
+save_total_limit: 2
+
+# Preprocessing
+num_preprocessing_workers: 40
+
+# Weights & Biases
+wandb_project: "Orpheus-Arabic-Voice-Cloning"
+

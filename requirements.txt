@@ -10,8 +10,9 @@ soundfile>=0.12.0
 # Phonemization
 phonemizer>=3.2.0
 
-# NeuCodec (for VQ encoding)
-neucodec>=0.0.3
+# Audio Codecs
+neucodec>=0.0.3  # For NeuTTS (Mimi codec)
+snac  # For Orpheus (SNAC codec)
 
 # Cloud Storage Integration
 google-cloud-storage>=2.10.0  # For GCS (primary)
@@ -24,8 +25,15 @@ omegaconf>=2.3.0
 # Logging & Progress
 loguru>=0.7.0
 tqdm>=4.65.0
+rich>=13.0.0  # For pretty terminal output
 
-# Optional but Recommended
+# Training & Optimization
+unsloth  # For efficient Orpheus finetuning with LoRA
+bitsandbytes>=0.41.0  # For 4-bit quantization
+peft>=0.5.0  # For LoRA adapters
+
+# Monitoring & Logging
+wandb>=0.15.0  # For experiment tracking
 tensorboard>=2.13.0  # For training monitoring
 accelerate>=0.20.0   # For distributed training
 
