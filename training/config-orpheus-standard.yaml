@@ -1,0 +1,45 @@
+# Orpheus Voice Cloning Configuration (Standard HuggingFace - No Unsloth)
+# This config uses full fine-tuning without LoRA or Unsloth
+# Similar to NeuTTS training approach
+
+# Model settings
+restore_from: "canopylabs/orpheus-3b-0.1"  # Standard Orpheus model (not Unsloth version)
+max_seq_len: 4096
+
+# Dataset settings
+paired_dataset_path: "dataset_cache/paired_dataset/"
+
+# Training settings
+save_root: "checkpoints/"
+run_name: "orpheus-arabic-voice-cloning-standard"
+
+# Hyperparameters (adjusted for full fine-tuning without Unsloth)
+lr: 5.0e-5  # Lower learning rate for stable full fine-tuning
+per_device_train_batch_size: 2  # Smaller batch size (full FT uses more memory)
+gradient_accumulation_steps: 16  # Increase to maintain effective batch size of 32
+num_train_epochs: 3
+max_steps: -1  # -1 means use num_train_epochs
+
+# Optimization
+warmup_ratio: 0.1  # More warmup for full fine-tuning
+weight_decay: 0.01
+lr_scheduler_type: "cosine"
+
+# Checkpointing
+save_steps: 500
+logging_steps: 1
+save_total_limit: 2
+
+# Preprocessing
+num_preprocessing_workers: 40
+
+# Weights & Biases
+wandb_project: "Orpheus-Arabic-Voice-Cloning-Standard"
+
+# Note: This config is for standard HuggingFace training (like NeuTTS)
+# - No LoRA
+# - No Unsloth
+# - Full fine-tuning only
+# - Requires 80GB+ GPU (A100/H100)
+# - Similar to finetune-neutts.py approach
+

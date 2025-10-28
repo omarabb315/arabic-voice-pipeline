@@ -9,7 +9,7 @@ pip install -r requirements.txt
 
 ### 2. Choose Training Mode
 
-#### LoRA (Recommended - 16-40GB GPU)
+#### LoRA with Unsloth (Recommended - 16-40GB GPU)
 ```bash
 # Edit config-orpheus.yaml
 use_lora: true
@@ -18,7 +18,14 @@ use_lora: true
 ./training/run_orpheus_training.sh
 ```
 
-#### Full Fine-tuning (80GB+ GPU)
+#### Standard HF Training (Like NeuTTS - 80GB+ GPU)
+```bash
+# Use standard training (no Unsloth)
+python training/finetune-orpheus-standard.py \
+    --config_fpath="training/config-orpheus-standard.yaml"
+```
+
+#### Full Fine-tuning with Unsloth (80GB+ GPU)
 ```bash
 # Use full fine-tuning config
 python training/finetune-orpheus.py \
@@ -29,20 +36,22 @@ python training/finetune-orpheus.py \
 
 ## 📊 Training Modes Comparison
 
-| Feature | LoRA | Full Fine-tuning |
-|---------|------|------------------|
-| **GPU Memory** | 16-40GB | 80GB+ |
-| **Speed** | 2x faster | Slower |
-| **Quality** | Very good (9/10) | Excellent (9.5/10) |
-| **Parameters Trained** | ~15% | 100% |
-| **Config Flag** | `use_lora: true` | `use_lora: false` |
-| **Recommended** | ✅ Yes | For highest quality |
+| Feature | LoRA (Unsloth) | Standard HF | Full FT (Unsloth) |
+|---------|----------------|-------------|-------------------|
+| **Script** | `finetune-orpheus.py` | `finetune-orpheus-standard.py` ⭐ NEW | `finetune-orpheus.py` |
+| **GPU Memory** | 16-40GB | 80GB+ | 80GB+ |
+| **Speed** | 2x faster | Standard | Standard |
+| **Quality** | Very good (9/10) | Excellent (9.5/10) | Excellent (9.5/10) |
+| **Parameters Trained** | ~15% | 100% | 100% |
+| **Dependencies** | Unsloth + PEFT | Standard HF only | Unsloth |
+| **Like NeuTTS** | ❌ No | ✅ Yes | ❌ No |
+| **Recommended** | ✅ For most users | For NeuTTS-style | For max quality |
 
 ---
 
 ## 🔧 Configuration Files
 
-### LoRA Training
+### LoRA Training (Unsloth)
 **File:** `training/config-orpheus.yaml`
 ```yaml
 use_lora: true
@@ -52,12 +61,21 @@ per_device_train_batch_size: 4
 lr: 1e-4
 ```
 
-### Full Fine-tuning
+### Standard HF Training (No Unsloth) ⭐ NEW
+**File:** `training/config-orpheus-standard.yaml`
+```yaml
+# No LoRA settings - pure HuggingFace
+per_device_train_batch_size: 2
+lr: 5e-5
+# Simple like NeuTTS!
+```
+
+### Full Fine-tuning (Unsloth)
 **File:** `training/config-orpheus-full-finetune.yaml`
 ```yaml
 use_lora: false
-per_device_train_batch_size: 2  # Smaller for memory
-lr: 5e-5  # Lower for stability
+per_device_train_batch_size: 2
+lr: 5e-5
 ```
 
 ---
@@ -66,10 +84,14 @@ lr: 5e-5  # Lower for stability
 
 ### Training
 ```bash
-# LoRA (default)
+# LoRA with Unsloth (recommended)
 ./training/run_orpheus_training.sh
 
-# Full fine-tuning
+# Standard HF (like NeuTTS) ⭐ NEW
+python training/finetune-orpheus-standard.py \
+    --config_fpath="training/config-orpheus-standard.yaml"
+
+# Full fine-tuning with Unsloth
 python training/finetune-orpheus.py \
     --config_fpath="training/config-orpheus-full-finetune.yaml"
 ```
